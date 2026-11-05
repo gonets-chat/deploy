@@ -35,7 +35,11 @@ services:
         frontend_source: https://github.com/gonets-chat/frontend.git${FRONTEND_GIT_REF:+#}${FRONTEND_GIT_REF:-}
     restart: unless-stopped
     ports:
-      - "${BIND_ADDRESS:-127.0.0.1}:${HTTP_PORT:-8080}:80"
+      - "80:80"
+      - "443:443"
+    volumes:
+      - letsencrypt:/etc/letsencrypt:ro
+      - acme_webroot:/var/www/certbot:ro
     depends_on:
       backend:
         condition: service_healthy
@@ -44,6 +48,15 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+    logging: *logging
+
+  certbot:
+    image: certbot/certbot:latest
+    profiles: ["tools"]
+    volumes:
+      - letsencrypt:/etc/letsencrypt
+      - acme_webroot:/var/www/certbot
+    command: ["renew", "--quiet"]
     logging: *logging
 
   backend:
@@ -117,3 +130,5 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  letsencrypt:
+  acme_webroot:

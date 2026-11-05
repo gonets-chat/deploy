@@ -1,6 +1,7 @@
 # Развёртывание OpenVerse
 
-Вариант для Linux VPS с Docker Compose и внешним HTTPS-прокси.
+Linux VPS с Docker Compose. Nginx внутри frontend напрямую принимает
+HTTP/HTTPS на портах 80/443 для `openverse.site`.
 Нужен только репозиторий deploy: `compose.yaml`, `.dockerignore` и `deploy/`.
 Docker BuildKit скачивает исходники напрямую из публичных репозиториев:
 
@@ -14,10 +15,18 @@ Docker BuildKit скачивает исходники напрямую из пу
 
 Из корня проекта на сервере:
 
+У домена должна быть A-запись `31.77.204.59`. AAAA-запись оставляй только если
+IPv6 тоже ведёт на этот VPS и сайт доступен по нему. TCP-порты 80/443 должны
+быть свободны и доступны из интернета, включая firewall Timeweb.
+
 ```sh
 cp .env.example .env
 chmod 600 .env
 ```
+
+Если `.env` уже заполнен, сохрани его. Установи
+`WS_ALLOWED_ORIGINS='["https://openverse.site"]'`.
+Старые `BIND_ADDRESS` и `HTTP_PORT` больше не используются.
 
 GitHub-токен, файл `.github-token` и SSH-ключи для скачивания исходников не нужны.
 
@@ -31,11 +40,11 @@ PostgreSQL и отдельный `SECRET_KEY` длиной минимум 32 с�
 
 ```sh
 docker compose config --quiet
-docker compose up -d --build
+sh deploy/enable-https.sh
 docker compose ps -a
 docker compose logs --tail=100 backend worker migrate
-curl --fail http://127.0.0.1:8080/healthz
-curl --fail http://127.0.0.1:8080/openapi.json
+curl --fail https://openverse.site/healthz
+curl --fail https://openverse.site/openapi.json
 ```
 
 Контейнер `migrate` должен завершиться с кодом `0`. API и worker запускаются
@@ -45,28 +54,54 @@ Healthcheck API проверяет HTTP, а не доступность БД п�
 
 ## Подключение HTTPS
 
-Внешний прокси на этом же сервере направь на `http://127.0.0.1:8080`.
-Передавай исходный `Host`, `X-Forwarded-Proto: https` и поддерживай WebSocket
-Upgrade для `/ws`. Проксируй все пути без удаления префиксов.
+Скрипт `enable-https.sh` собирает образы и запускает HTTP-конфигурацию Nginx,
+если сертификата ещё нет. Затем выпускает сертификат Let’s Encrypt через
+[Certbot webroot](https://eff-certbot.readthedocs.io/en/stable/using.html#webroot)
+и перезапускает frontend с HTTPS. Команда принимает условия Let’s Encrypt
+(`--agree-tos`), аккаунт регистрируется без email. Повторный запуск использует
+действующий сертификат, если он ещё не требует обновления.
 
-Если прокси работает в контейнере, его `127.0.0.1` не является хостом VPS:
-подключи прокси к сети этого Compose и используй `frontend:80`.
-При прокси на другом сервере укажи в `BIND_ADDRESS` приватный IP VPS и разреши
-доступ к порту только с адреса прокси.
+После выпуска HTTP перенаправляется на HTTPS, кроме `/healthz` и пути
+проверки сертификата. TCP-порт 80 оставь доступным для продления через HTTP-01.
+При ошибке выпуска проверь DNS, AAAA, доступность порта 80 и вывод Certbot.
 
 Браузер открывает один HTTPS-домен: Nginx отдаёт React и передаёт `/auth`,
 `/chat`, `/users`, `/ws`, `/docs`, `/redoc`, `/openapi.json` в API.
 Клиентские маршруты React, включая `/messenger`, работают при обновлении страницы.
 В production (`DEBUG=false`) cookies имеют флаг Secure, поэтому вход проверяй
-через публичный HTTPS-адрес. HTTPS и сертификаты настраиваются внешним прокси.
+через публичный HTTPS-адрес. Nginx сам завершает TLS.
+
+Если меняешь домен, обнови `deploy/nginx.conf`, `deploy/nginx.http.conf`,
+`deploy/40-select-https.sh`, `deploy/enable-https.sh` и `WS_ALLOWED_ORIGINS`.
+
+## Продление сертификата
+
+Проверь продление через тестовый сервер Let’s Encrypt:
+
+```sh
+docker compose run --rm certbot renew --dry-run
+```
+
+В root crontab (`crontab -e`) добавь одну строку. Путь соответствует
+репозиторию в `/root/deploy`; для другого расположения измени его:
+
+```cron
+17 3,15 * * * /usr/bin/flock -n /var/lock/openverse-certbot.lock /bin/sh /root/deploy/deploy/renew-https.sh >> /var/log/openverse-certbot.log 2>&1
+```
+
+Дважды в сутки Certbot проверяет необходимость продления. После успешной
+проверки скрипт выполняет `nginx -t` и reload. Ошибки попадут в лог
+`/var/log/openverse-certbot.log`. Сертификаты и ACME webroot хранятся в volumes
+`letsencrypt` и `acme_webroot`; frontend получает их только для чтения.
 
 ## Состав
 
-- `frontend`: сборка React/Vite и Nginx; единственный опубликованный порт.
+- `frontend`: React/Vite и Nginx; опубликованы порты 80/443.
 - `backend`: FastAPI, один Uvicorn worker, без reload.
 - `worker`: Taskiq для фоновых задач.
 - `migrate`: одноразовый запуск `alembic upgrade head`.
 - `db`, `redis`: внутренние сервисы с постоянными Docker volumes, без портов хоста.
+- `certbot`: запускается скриптами по запросу, профиль `tools`.
 
 API оставлен в одном экземпляре: текущий менеджер WebSocket хранит соединения
 в памяти процесса. Масштабирование требует отдельной доработки доставки событий.
@@ -91,5 +126,5 @@ docker compose logs --tail=100 migrate backend worker
 При ошибке миграций проверь логи `migrate`; API и worker не запустятся.
 
 Остановка с сохранением данных: `docker compose down`.
-`docker compose down -v` удаляет данные PostgreSQL и Redis.
+`docker compose down -v` удаляет данные PostgreSQL, Redis и сертификаты.
 Изменение пароля в `.env` не меняет пароль уже созданной базы.
