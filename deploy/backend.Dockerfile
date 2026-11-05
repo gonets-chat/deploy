@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 FROM python:3.14-slim-bookworm AS builder
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -9,7 +10,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential libpq-dev \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir poetry==2.4.1
-COPY backend/pyproject.toml backend/poetry.lock ./
+COPY --from=backend_source /pyproject.toml /poetry.lock ./
 RUN poetry install --only main --no-root
 
 FROM python:3.14-slim-bookworm
@@ -25,9 +26,9 @@ RUN apt-get update \
     && useradd --create-home --uid 10001 app
 WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
-COPY backend/src ./src
-COPY backend/alembic ./alembic
-COPY backend/alembic.ini ./alembic.ini
+COPY --from=backend_source /src ./src
+COPY --from=backend_source /alembic ./alembic
+COPY --from=backend_source /alembic.ini ./alembic.ini
 USER app
 EXPOSE 8000
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

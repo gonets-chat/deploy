@@ -1,9 +1,14 @@
 # Развёртывание OpenVerse
 
 Вариант для Linux VPS с Docker Compose и внешним HTTPS-прокси.
-Файлы запуска находятся в корне рядом с каталогами `backend/` и `frontend/`.
-Оба каталога — отдельные Git-репозитории; при переносе сохрани также корневые
-`compose.yaml`, `.dockerignore` и `deploy/`.
+Нужен только репозиторий deploy: `compose.yaml`, `.dockerignore` и `deploy/`.
+Docker BuildKit скачивает исходники напрямую из публичных репозиториев:
+
+- https://github.com/gonets-chat/backend.git
+- https://github.com/gonets-chat/frontend.git
+
+Локальные каталоги `backend/` и `frontend/` для сборки не используются.
+Нужны Docker BuildKit/Buildx и Docker Compose версии 2.17 или новее.
 
 ## Первый запуск
 
@@ -14,10 +19,15 @@ cp .env.example .env
 chmod 600 .env
 ```
 
+GitHub-токен, файл `.github-token` и SSH-ключи для скачивания исходников не нужны.
+
 Заполни `.env`: укажи публичный домен в `WS_ALLOWED_ORIGINS`, случайный пароль
 PostgreSQL и отдельный `SECRET_KEY` длиной минимум 32 символа. Значения можно
 сгенерировать двумя вызовами `openssl rand -hex 32`. В пароле PostgreSQL не
 используй `%`: текущая конфигурация Alembic не экранирует его для ConfigParser.
+По умолчанию скачивается текущая версия основной ветки каждого репозитория.
+Для конкретной версии задай `BACKEND_GIT_REF` и `FRONTEND_GIT_REF` в `.env`:
+ветку, тег или полный SHA коммита. SHA позволяет повторить ту же сборку.
 
 ```sh
 docker compose config --quiet
@@ -65,7 +75,8 @@ API оставлен в одном экземпляре: текущий мене
 
 ## Обновление
 
-Обнови исходники обоих репозиториев. Затем из корня:
+Обнови репозиторий deploy командой `git pull --ff-only`. Если используешь
+фиксированные SHA, обнови их в `.env`. Затем из корня:
 
 ```sh
 docker compose build

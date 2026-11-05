@@ -3,3 +3,4 @@
 !.env.example
 /frontend/
 /backend/
+.github-token

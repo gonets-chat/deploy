@@ -1,8 +1,9 @@
+# syntax=docker/dockerfile:1
 FROM node:24-alpine AS builder
 WORKDIR /app
-COPY frontend/package.json frontend/package-lock.json ./
+COPY --from=frontend_source /package.json /package-lock.json ./
 RUN npm ci
-COPY frontend/ ./
+COPY --from=frontend_source / ./
 RUN npm run build
 
 FROM nginx:stable-alpine

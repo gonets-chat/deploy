@@ -5,6 +5,8 @@ x-app: &app
   build:
     context: .
     dockerfile: deploy/backend.Dockerfile
+    additional_contexts:
+      backend_source: https://github.com/gonets-chat/backend.git${BACKEND_GIT_REF:+#}${BACKEND_GIT_REF:-}
   environment:
     POSTGRES_HOST: db
     POSTGRES_PORT: "5432"
@@ -29,6 +31,8 @@ services:
     build:
       context: .
       dockerfile: deploy/frontend.Dockerfile
+      additional_contexts:
+        frontend_source: https://github.com/gonets-chat/frontend.git${FRONTEND_GIT_REF:+#}${FRONTEND_GIT_REF:-}
     restart: unless-stopped
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${HTTP_PORT:-8080}:80"
